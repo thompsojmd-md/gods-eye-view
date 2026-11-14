@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal SNTP server. Run as root/admin (UDP 123): sudo python3 ntp_server.py [port]"""
-import socket, struct, sys, time
+"""Minimal SNTP server. Run as root/admin (UDP 123):
+  sudo python3 ntp_server.py [port] [--at "2030-01-01 12:00:00"]   (--at is UTC; clock keeps ticking from there)
+  --offset SECONDS shifts the real clock instead."""
+import argparse, calendar, socket, struct, time
 
-OFFSET = 0  # ponytail: seconds to add to system clock; NTP is UTC, Xbox applies its own timezone
+OFFSET = 0  # seconds added to the system clock; NTP is UTC, Xbox applies its own timezone
 EPOCH = 2208988800  # 1900 -> 1970
 
 def ts(t):
@@ -25,12 +27,22 @@ def main(port=123):
             print("served", addr[0])
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
-        # one-shot check: fake client request -> server reply must carry current time
+    a = argparse.ArgumentParser()
+    a.add_argument("port", nargs="?", type=int, default=123)
+    a.add_argument("--at", help='fake UTC time "YYYY-MM-DD HH:MM:SS"')
+    a.add_argument("--offset", type=float, help="seconds to add to real time")
+    a.add_argument("--selftest", action="store_true")
+    a = a.parse_args()
+    if a.at:
+        OFFSET = calendar.timegm(time.strptime(a.at, "%Y-%m-%d %H:%M:%S")) - time.time()
+    elif a.offset:
+        OFFSET = a.offset
+    if a.selftest:
+        # fake client request -> reply must echo originate ts and carry current time
         req = bytes([0x23]) + bytes(39) + ts(12345.5)
         r = reply(req, time.time())
         assert len(r) == 48 and r[0] & 7 == 4 and r[24:32] == ts(12345.5)
-        assert abs(struct.unpack("!I", r[40:44])[0] - EPOCH - time.time()) < 2
+        assert abs(struct.unpack("!I", r[40:44])[0] - EPOCH - time.time() - OFFSET) < 2
         print("ok")
     else:
-        main(int(sys.argv[1]) if len(sys.argv) > 1 else 123)
+        main(a.port)
